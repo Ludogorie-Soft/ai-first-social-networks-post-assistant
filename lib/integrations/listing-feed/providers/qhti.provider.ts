@@ -21,6 +21,13 @@
  * returns `complete: false`, which is what stops ingestion from ever concluding
  * that a listing absent from this response has been withdrawn. See the
  * disappearance note in ingest-content-source.service.ts.
+ *
+ * ── Category scope ────────────────────────────────────────────────────────────
+ * The client's request for this integration is boats and yachts specifically —
+ * not engines, marine electronics, or parts, which QHTI's homepage payload mixes
+ * into the same response. That restriction is enforced here, on the RAW ad's
+ * `category` field, before a non-BOATS_AND_YACHTS entry is even normalized. See
+ * `isEligibleQhtiCategory`.
  */
 
 import {
@@ -116,10 +123,55 @@ export function joinLocation(region: string | null, place: string | null): strin
 }
 
 /**
+ * The only `category` value this integration ingests.
+ *
+ * Observed on the live payload (2026-09-14, 214 entries): `BOATS_AND_YACHTS`
+ * (126, across the `boats` and `yachts` buckets), `ENGINES` (50),
+ * `MARINE_ELECTRONICS` (22, across `sonars` and `trollingMotors`), and `PARTS`
+ * (16). The client's request is boats and yachts only.
+ */
+const ELIGIBLE_CATEGORY = "BOATS_AND_YACHTS";
+
+/**
+ * Whether a RAW QHTI ad belongs to the one category this integration ingests.
+ *
+ * Reads `ad.category` directly, on the UNNORMALIZED entry, so a listing that
+ * fails this check is never passed to `normalizeQhtiListing` at all — it costs
+ * nothing beyond one string comparison, and it means a category-excluded ad
+ * cannot reach `planListingSync`/`upsertFeedItem` by any path.
+ *
+ * Exact equality, not a prefix or substring test: QHTI's category is a closed
+ * enum on their side, and a loose match would risk admitting some future
+ * `BOATS_AND_YACHTS_*` variant that actually names a different, non-vessel
+ * category.
+ *
+ * A missing, null, non-string, or unrecognised category is REJECTED — never
+ * passed through on the assumption that it is "probably fine". Silently
+ * admitting an unknown value is exactly how an unrelated category would leak
+ * into a feed the client scoped to boats and yachts only.
+ */
+export function isEligibleQhtiCategory(raw: unknown): boolean {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return false;
+  return (raw as Record<string, unknown>).category === ELIGIBLE_CATEGORY;
+}
+
+/** The raw ad's own id, read without normalizing — for a category-skip diagnostic. */
+function rawExternalId(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return asString((raw as Record<string, unknown>).id) ?? undefined;
+}
+
+/**
  * Turns one raw QHTI ad into a NormalizedListing, or explains why it cannot.
  *
  * Exported so the mapping can be tested against real payload shapes without a
  * network call — this function is where every QHTI-specific assumption lives.
+ *
+ * Deliberately does NOT re-check category eligibility: that gate runs earlier,
+ * in `collectQhtiListings`, on the raw entry, so a rejected listing never
+ * reaches this function. Keeping the check in exactly one place is what makes
+ * "only BOATS_AND_YACHTS is ingested" a fact about the pipeline's shape rather
+ * than something two functions have to agree on separately.
  */
 export function normalizeQhtiListing(
   raw: unknown,
@@ -286,6 +338,20 @@ export function collectQhtiListings(payload: unknown): ListingFetchResult {
 
     for (const entry of value) {
       if (listings.length >= MAX_LISTINGS_PER_FETCH) break;
+
+      // Category scope, checked on the RAW entry — before normalization, and
+      // therefore before this listing can reach planListingSync/upsertFeedItem
+      // by any path. Not a malformed-entry rejection (the ad is perfectly
+      // valid QHTI data), but reported the same way: an operator watching this
+      // sync should be able to see "88 of 214 excluded — wrong category" rather
+      // than a silently smaller number.
+      if (!isEligibleQhtiCategory(entry)) {
+        skipped.push({
+          reason: `category is not "${ELIGIBLE_CATEGORY}"`,
+          externalId: rawExternalId(entry),
+        });
+        continue;
+      }
 
       const result = normalizeQhtiListing(entry, bucket);
       if (!result.ok) {

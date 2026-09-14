@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   collectQhtiListings,
+  isEligibleQhtiCategory,
   joinLocation,
   normalizeQhtiListing,
   parseJavaDateArray,
@@ -42,6 +43,53 @@ const REAL_SONAR = {
   primaryImageUrl: "https://boat-marketplace-images.s3.eu-north-1.amazonaws.com/ads/474/b.webp",
   companyLogo: "",
   homepageCategory: "SONARS",
+};
+
+/** A second real BOATS_AND_YACHTS ad — for tests needing two in-scope listings. */
+const REAL_YACHT = {
+  id: 476,
+  title: "Яхта Rinker 230",
+  slug: "obiava-476-yahta-rinker-230",
+  category: "BOATS_AND_YACHTS",
+  price: { amount: 22200.0, type: "FIXED_PRICE", vatStatus: "PRIVATE_SALE" },
+  location1: "Русе",
+  location2: "гр. Русе",
+  adType: "FROM_PRIVATE",
+  createdAt: [2026, 8, 14, 17, 40, 31, 0],
+  primaryImageUrl: "https://boat-marketplace-images.s3.eu-north-1.amazonaws.com/ads/476/c.webp",
+  companyLogo: "",
+  homepageCategory: "YACHTS",
+};
+
+/** Out-of-scope categories, real rows copied verbatim on 2026-09-14. */
+const REAL_ENGINE = {
+  id: 480,
+  title: "Извънбордов двигател Mercury Marine Америка 25hp",
+  slug: "obiava-480-izvynbordov-dvigatel-mercury-marine-amerika-25hp",
+  category: "ENGINES",
+  price: { amount: 450, type: "FIXED_PRICE", vatStatus: "INCLUDED" },
+  location1: "Варна",
+  location2: "гр. Варна",
+  adType: "FROM_PRIVATE",
+  createdAt: [2026, 8, 25, 15, 40, 49, 931631000],
+  primaryImageUrl: "https://boat-marketplace-images.s3.eu-north-1.amazonaws.com/ads/480/d.webp",
+  companyLogo: "",
+  homepageCategory: "ENGINES",
+};
+
+const REAL_PART = {
+  id: 484,
+  title: "Лебедка за колесар",
+  slug: "obiava-484-lebedka-za-kolesar",
+  category: "PARTS",
+  price: { amount: 27, type: "FIXED_PRICE", vatStatus: "INCLUDED" },
+  location1: "София",
+  location2: "гр. София",
+  adType: "FROM_COMPANY",
+  createdAt: [2026, 8, 28, 16, 21, 12, 899397000],
+  primaryImageUrl: "https://boat-marketplace-images.s3.eu-north-1.amazonaws.com/ads/484/e.webp",
+  companyLogo: "https://boat-marketplace-images.s3.eu-north-1.amazonaws.com/company-logos/x/f.webp",
+  homepageCategory: "PARTS",
 };
 
 function fieldValue(
@@ -265,20 +313,127 @@ describe("normalizeQhtiListing — malformed entries", () => {
   });
 });
 
+// ─── Category scope ─────────────────────────────────────────────────────────
+//
+// The client's request for this integration is boats and yachts only. QHTI's
+// homepage payload mixes engines, marine electronics and parts into the same
+// response, so this gate is the whole reason those never reach a post.
+
+describe("isEligibleQhtiCategory", () => {
+  it("accepts BOATS_AND_YACHTS", () => {
+    assert.equal(isEligibleQhtiCategory(REAL_BOAT), true);
+    assert.equal(isEligibleQhtiCategory(REAL_YACHT), true);
+  });
+
+  it("rejects every other observed category", () => {
+    assert.equal(isEligibleQhtiCategory(REAL_SONAR), false, "MARINE_ELECTRONICS");
+    assert.equal(isEligibleQhtiCategory(REAL_ENGINE), false, "ENGINES");
+    assert.equal(isEligibleQhtiCategory(REAL_PART), false, "PARTS");
+  });
+
+  it("rejects a missing category rather than treating absence as acceptable", () => {
+    const { category: _drop, ...withoutCategory } = REAL_BOAT;
+    assert.equal(isEligibleQhtiCategory(withoutCategory), false);
+    assert.equal(isEligibleQhtiCategory({ ...REAL_BOAT, category: null }), false);
+    assert.equal(isEligibleQhtiCategory({ ...REAL_BOAT, category: "" }), false);
+  });
+
+  it("rejects a category QHTI has never used, rather than assuming it is fine", () => {
+    // Guards against silent scope creep if QHTI ever introduces, say, a
+    // BOATS_AND_YACHTS_ACCESSORIES value that is not actually a vessel.
+    assert.equal(isEligibleQhtiCategory({ ...REAL_BOAT, category: "REAL_ESTATE" }), false);
+    assert.equal(
+      isEligibleQhtiCategory({ ...REAL_BOAT, category: "BOATS_AND_YACHTS_ACCESSORIES" }),
+      false,
+      "prefix match must not pass"
+    );
+  });
+
+  it("rejects a non-string category", () => {
+    assert.equal(isEligibleQhtiCategory({ ...REAL_BOAT, category: 1 }), false);
+    assert.equal(isEligibleQhtiCategory({ ...REAL_BOAT, category: ["BOATS_AND_YACHTS"] }), false);
+  });
+
+  it("rejects a non-object entry", () => {
+    assert.equal(isEligibleQhtiCategory(null), false);
+    assert.equal(isEligibleQhtiCategory("BOATS_AND_YACHTS"), false);
+    assert.equal(isEligibleQhtiCategory([REAL_BOAT]), false);
+  });
+});
+
+describe("collectQhtiListings — category scope", () => {
+  it("keeps BOATS_AND_YACHTS and drops every other category from one mixed fetch", () => {
+    // Exactly the shape the live endpoint returns: multiple categories mixed
+    // across buckets in a single response.
+    const result = collectQhtiListings({
+      boats: [REAL_BOAT],
+      yachts: [REAL_YACHT],
+      engines: [REAL_ENGINE],
+      sonars: [REAL_SONAR],
+      parts: [REAL_PART],
+    });
+
+    assert.deepEqual(
+      result.listings.map((l) => l.externalId).sort(),
+      ["475", "476"],
+      "only the two BOATS_AND_YACHTS ads are ingested"
+    );
+  });
+
+  it("never normalizes a category-excluded entry", () => {
+    // If category exclusion ran AFTER normalization, a malformed non-boat entry
+    // (no slug) would show up as a NORMALIZATION failure. It must not: the
+    // category gate runs first, so this entry is rejected for its category,
+    // not for a defect it does not have.
+    const result = collectQhtiListings({ engines: [{ ...REAL_ENGINE, slug: null }] });
+    assert.equal(result.listings.length, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /category/i);
+    assert.doesNotMatch(result.skipped[0].reason, /slug/i);
+  });
+
+  it("reports a category-excluded ad in `skipped`, with its id, for operator visibility", () => {
+    const result = collectQhtiListings({ sonars: [REAL_SONAR] });
+    assert.equal(result.listings.length, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].externalId, "474");
+    assert.match(result.skipped[0].reason, /BOATS_AND_YACHTS/);
+  });
+
+  it("excludes a listing with a missing category, not just a wrong one", () => {
+    const { category: _drop, ...noCategoryEngine } = REAL_ENGINE;
+    const result = collectQhtiListings({ engines: [noCategoryEngine] });
+    assert.equal(result.listings.length, 0);
+    assert.equal(result.skipped.length, 1);
+  });
+
+  it("one non-boat category among several boats does not cost the boats their ingest", () => {
+    const result = collectQhtiListings({
+      boats: [REAL_BOAT, REAL_YACHT],
+      parts: [REAL_PART],
+    });
+    assert.equal(result.listings.length, 2);
+    assert.equal(result.skipped.length, 1);
+  });
+});
+
 // ─── collectQhtiListings ──────────────────────────────────────────────────────
 
 describe("collectQhtiListings", () => {
   it("produces ONE listing per ad across every bucket", () => {
+    // Both fixtures are BOATS_AND_YACHTS, deliberately: this test is about the
+    // one-row-per-ad shape across buckets, kept isolated from the category
+    // filter, which has its own dedicated tests below.
     const result = collectQhtiListings({
       boats: [REAL_BOAT],
-      sonars: [REAL_SONAR],
+      yachts: [REAL_YACHT],
       engines: [],
     });
 
     assert.equal(result.listings.length, 2, "two ads in, two listings out");
     assert.deepEqual(
       result.listings.map((l) => l.externalId),
-      ["475", "474"]
+      ["475", "476"]
     );
   });
 
@@ -297,10 +452,12 @@ describe("collectQhtiListings", () => {
     assert.equal(result.listings.length, 1);
   });
 
-  // The rule the whole failure story rests on.
+  // The rule the whole failure story rests on. Both good entries are
+  // BOATS_AND_YACHTS on purpose, so this stays a test about malformed-entry
+  // survival and does not also exercise the category filter.
   it("keeps every valid listing when one entry is malformed", () => {
     const result = collectQhtiListings({
-      boats: [REAL_BOAT, { ...REAL_BOAT, id: 999, slug: null }, REAL_SONAR],
+      boats: [REAL_BOAT, { ...REAL_BOAT, id: 999, slug: null }, REAL_YACHT],
     });
 
     assert.equal(result.listings.length, 2, "the two good ones survive");
