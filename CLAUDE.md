@@ -25,6 +25,8 @@ npm run format:check  # Prettier check
 # Database
 npm run db:generate   # prisma generate (after schema changes)
 npm run db:migrate    # prisma migrate dev (creates and applies migration)
+npm run db:deploy     # prisma migrate deploy (applies pending migrations — the production-safe one)
+npm run db:status     # prisma migrate status (read-only inspection)
 npm run db:push       # prisma db push (no migration, dev only)
 npm run db:studio     # Prisma Studio GUI
 
@@ -126,6 +128,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 Prisma uses `@map()` everywhere: camelCase in code, snake_case in DB. Enums exist for `Role`, `PostStatus`, `SocialChannel`, `LlmProvider`, etc. — prefer using the enum values when interacting with those fields.
 
 After any schema change: `npm run db:migrate` then `npm run db:generate`.
+
+**Two database URLs, and they are not interchangeable.** `DATABASE_URL` is the POOLED
+Neon endpoint and serves all application traffic; `DIRECT_URL` is the same host without
+`-pooler` and is REQUIRED for schema work. `prisma.config.ts` picks between them from
+the invoked subcommand, so `migrate`/`db push`/`db pull`/`db execute` get the direct
+connection automatically — including hand-typed `npx prisma migrate deploy`. Never run
+migrations through the pooler: `prisma migrate` holds a session-level advisory lock which
+pgbouncer can orphan onto a shared backend, failing every later migration with P1002
+(bug-183). If `DIRECT_URL` is not set, schema commands **fail immediately with no
+fallback and no connection attempt** — do not work around this by setting `DIRECT_URL`
+to a pooled host or by hand-forcing `DATABASE_URL` before the command; set `DIRECT_URL`
+to the real direct endpoint instead. Prisma 7 cannot express this declaratively —
+`Datasource` accepts only `{ url, shadowDatabaseUrl }`, and a `directUrl` key there is
+silently ignored — so this file computes the URL in TypeScript, not the CLI. Real `.env`
+files are never touched by this logic; only which of the two already-set variables is
+read.
 
 ### UI Components
 
