@@ -1,25 +1,53 @@
 import { createHash, randomBytes } from "crypto";
-import nodemailer from "nodemailer";
 import { prisma } from "@/lib/db/client";
 
 const EXPIRY_HOURS = 24;
 
-function createTransport() {
-  const host = process.env.EMAIL_HOST;
-  const port = parseInt(process.env.EMAIL_PORT ?? "587", 10);
-  const secure = process.env.EMAIL_SECURE === "true";
-  const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASS;
+const BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email";
+const BREVO_TIMEOUT_MS = 10_000;
 
-  if (!host || !user || !pass) {
-    throw new Error("EMAIL_HOST, EMAIL_USER, and EMAIL_PASS environment variables are required.");
+type Sender = { email: string; name?: string };
+
+// EMAIL_FROM accepts either "addr@example.com" or "Display Name <addr@example.com>".
+function getSender(): Sender {
+  const from = process.env.EMAIL_FROM?.trim();
+  if (!from) {
+    throw new Error("EMAIL_FROM environment variable is required.");
   }
 
-  return nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  const match = from.match(/^(.*?)\s*<([^>]+)>$/);
+  if (!match) return { email: from };
+
+  const name = match[1].replace(/^"|"$/g, "").trim();
+  return name ? { email: match[2].trim(), name } : { email: match[2].trim() };
 }
 
-function getFrom(): string {
-  return process.env.EMAIL_FROM ?? "noreply@localhost";
+async function sendViaBrevo(params: { to: string; subject: string; html: string }): Promise<void> {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    throw new Error("BREVO_API_KEY environment variable is required.");
+  }
+
+  const res = await fetch(BREVO_SEND_URL, {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: getSender(),
+      to: [{ email: params.to }],
+      subject: params.subject,
+      htmlContent: params.html,
+    }),
+    signal: AbortSignal.timeout(BREVO_TIMEOUT_MS),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Brevo send failed (${res.status}): ${detail}`);
+  }
 }
 
 function getBaseUrl(): string {
@@ -77,9 +105,7 @@ export async function sendVerificationEmail(
   const isBg = lang === "bg";
   const subject = isBg ? "Потвърди имейл адреса си" : "Verify your email address";
 
-  const transporter = createTransport();
-  await transporter.sendMail({
-    from: getFrom(),
+  await sendViaBrevo({
     to: email,
     subject,
     html: buildEmailHtml(verifyUrl, lang),
