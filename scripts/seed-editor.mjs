@@ -35,7 +35,7 @@ async function main() {
   // 2. Upsert the editor user
   let user = await prisma.user.findUnique({
     where: { email: EDITOR_EMAIL },
-    select: { id: true },
+    select: { id: true, emailVerified: true },
   });
 
   if (!user) {
@@ -47,11 +47,16 @@ async function main() {
         email: EDITOR_EMAIL,
         passwordHash,
         isGlobalAdmin: false,
+        // Seeded users skip the verification email; login rejects unverified users.
+        emailVerified: true,
         preferredLang: "en",
       },
-      select: { id: true },
+      select: { id: true, emailVerified: true },
     });
     console.log(`✓  Created user: ${EDITOR_EMAIL}`);
+  } else if (!user.emailVerified) {
+    await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true } });
+    console.log(`✓  Marked existing user as email-verified: ${EDITOR_EMAIL}`);
   } else {
     console.log(`✓  User already exists: ${EDITOR_EMAIL}`);
   }

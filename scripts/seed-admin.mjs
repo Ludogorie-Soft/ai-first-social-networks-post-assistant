@@ -20,7 +20,7 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   let user = await prisma.user.findUnique({
     where: { email: ADMIN_EMAIL },
-    select: { id: true, isGlobalAdmin: true },
+    select: { id: true, isGlobalAdmin: true, emailVerified: true },
   });
 
   if (!user) {
@@ -31,15 +31,17 @@ async function main() {
         email: ADMIN_EMAIL,
         passwordHash,
         isGlobalAdmin: true,
+        // Seeded users skip the verification email; login rejects unverified users.
+        emailVerified: true,
         preferredLang: "en",
       },
-      select: { id: true, isGlobalAdmin: true },
+      select: { id: true, isGlobalAdmin: true, emailVerified: true },
     });
     console.log(`✓  Created global admin: ${ADMIN_EMAIL}`);
-  } else if (!user.isGlobalAdmin) {
+  } else if (!user.isGlobalAdmin || !user.emailVerified) {
     await prisma.user.update({
       where: { id: user.id },
-      data: { isGlobalAdmin: true },
+      data: { isGlobalAdmin: true, emailVerified: true },
     });
     console.log(`✓  Promoted existing user to global admin: ${ADMIN_EMAIL}`);
   } else {
