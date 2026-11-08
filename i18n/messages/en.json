@@ -97,6 +97,7 @@
     "tagline": "Post Assistant"
   },
   "auth": {
+    "privacyPolicy": "Privacy Policy",
     "intro": {
       "heading": "Social media post generator",
       "lead": "Create high-quality, relevant content for Facebook, Instagram and LinkedIn with AI.",
