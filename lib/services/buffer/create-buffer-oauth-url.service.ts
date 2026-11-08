@@ -1,15 +1,8 @@
 import { getBufferAuthUrl } from "@/lib/integrations/buffer/client";
+import { getBufferConfig } from "@/lib/integrations/buffer/config";
 import { createPkcePair } from "@/lib/integrations/buffer/pkce";
 import { createOAuthState } from "@/lib/integrations/buffer/state";
 import { checkBufferAccess } from "./_access";
-
-function getBufferConfig(): { clientId: string; clientSecret: string; redirectUri: string } | null {
-  const clientId = process.env.BUFFER_CLIENT_ID;
-  const clientSecret = process.env.BUFFER_CLIENT_SECRET;
-  const redirectUri = process.env.BUFFER_REDIRECT_URI;
-  if (!clientId || !clientSecret || !redirectUri) return null;
-  return { clientId, clientSecret, redirectUri };
-}
 
 export type CreateBufferOAuthUrlResult =
   | { success: true; url: string; codeVerifier: string }

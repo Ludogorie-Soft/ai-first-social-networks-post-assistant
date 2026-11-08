@@ -36,6 +36,15 @@ export async function GET(request: Request) {
   // to `/companies/{slug}`, which shows no Buffer card at all — so the result of
   // every connect attempt, success or failure, was silently discarded.
   if (!result.success) {
+    console.warn("[buffer-callback] connection failed", {
+      code: result.code,
+      slug: result.slug,
+      bufferError: searchParams.get("error"),
+      bufferErrorDescription: searchParams.get("error_description"),
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasPkceCookie: Boolean(codeVerifier),
+    });
     const destination = result.slug
       ? `/companies/${result.slug}/settings/buffer?buffer=error`
       : "/dashboard?buffer=error";

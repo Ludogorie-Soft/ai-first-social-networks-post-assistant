@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { refreshBufferTokens } from "@/lib/integrations/buffer/client";
+import { getBufferClientCredentials } from "@/lib/integrations/buffer/config";
 import { decrypt, encrypt } from "@/lib/security/encryption";
 import { BufferClient } from "./buffer-client";
 import { BufferNoConnectionError, BufferTokenExpiredError } from "./buffer-errors";
@@ -26,9 +27,9 @@ export async function getBufferClient(companyId: string): Promise<BufferClient> 
     connection.tokenExpiresAt.getTime() < Date.now() + EXPIRY_LEEWAY_MS;
 
   if (isExpired && connection.refreshTokenEnc) {
-    const clientId = process.env.BUFFER_CLIENT_ID;
-    const clientSecret = process.env.BUFFER_CLIENT_SECRET;
-    if (!clientId || !clientSecret) throw new BufferTokenExpiredError();
+    const credentials = getBufferClientCredentials();
+    if (!credentials) throw new BufferTokenExpiredError();
+    const { clientId, clientSecret } = credentials;
 
     let tokens: Awaited<ReturnType<typeof refreshBufferTokens>>;
     try {

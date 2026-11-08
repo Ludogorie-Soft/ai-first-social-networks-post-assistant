@@ -1,17 +1,10 @@
 import { prisma } from "@/lib/db/client";
 import { exchangeCodeForTokens, getBufferAccountId } from "@/lib/integrations/buffer/client";
+import { getBufferConfig } from "@/lib/integrations/buffer/config";
 import { verifyOAuthState } from "@/lib/integrations/buffer/state";
 import { encrypt } from "@/lib/security/encryption";
 import { checkBufferAccess } from "./_access";
 import { syncBufferProfiles } from "@/lib/services/company/sync-buffer-profiles.service";
-
-function getBufferConfig(): { clientId: string; clientSecret: string; redirectUri: string } | null {
-  const clientId = process.env.BUFFER_CLIENT_ID;
-  const clientSecret = process.env.BUFFER_CLIENT_SECRET;
-  const redirectUri = process.env.BUFFER_REDIRECT_URI;
-  if (!clientId || !clientSecret || !redirectUri) return null;
-  return { clientId, clientSecret, redirectUri };
-}
 
 export type HandleBufferCallbackResult =
   | { success: true; slug: string }
@@ -60,7 +53,11 @@ export async function handleBufferCallback(
       codeVerifier
     );
     bufferUserId = await getBufferAccountId(tokens.accessToken);
-  } catch {
+  } catch (err) {
+    console.error("[buffer-callback] token exchange failed", {
+      slug,
+      message: err instanceof Error ? err.message : String(err),
+    });
     return { success: false, slug, code: "EXCHANGE_FAILED" };
   }
 

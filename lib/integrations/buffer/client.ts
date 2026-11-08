@@ -40,7 +40,14 @@ async function requestTokens(body: URLSearchParams): Promise<BufferTokens> {
   });
 
   if (!res.ok) {
-    throw new Error(`Buffer token request failed with status ${res.status}.`);
+    // Only the documented error fields: never echo the raw body of a token endpoint.
+    const detail = (await res.json().catch(() => null)) as {
+      error?: string;
+      error_description?: string;
+    } | null;
+    throw new Error(
+      `Buffer token request failed with status ${res.status}: ${detail?.error ?? "unknown"} (${detail?.error_description ?? "no description"}).`
+    );
   }
 
   const data = (await res.json()) as {

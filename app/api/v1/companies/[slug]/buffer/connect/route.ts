@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { logBufferConnectDiagnostics } from "@/lib/integrations/buffer/config";
 import {
   PKCE_COOKIE_MAX_AGE,
   PKCE_COOKIE_NAME,
@@ -11,7 +12,7 @@ interface Context {
   params: Promise<{ slug: string }>;
 }
 
-export async function GET(_req: Request, context: Context) {
+export async function GET(req: Request, context: Context) {
   const session = await auth();
   if (!session) {
     return Response.json(
@@ -48,6 +49,8 @@ export async function GET(_req: Request, context: Context) {
         );
     }
   }
+
+  logBufferConnectDiagnostics(new URL(req.url).host);
 
   // The PKCE verifier must survive the round-trip to Buffer without appearing
   // in any URL, so it travels in an HttpOnly cookie scoped to the callback.
