@@ -28,6 +28,8 @@ function initialSourceLinkPref(value: string | boolean | undefined): SourceLinkP
 
 interface Props {
   initialData?: ContentSourceItem;
+  /** The brand's own RSS sources against the cap; shown when adding one. */
+  rssLimit?: { used: number; max: number };
   saving: boolean;
   onSave: (data: ContentSourcePayload) => void;
   onCancel: () => void;
@@ -37,7 +39,7 @@ const BASE =
   "w-full rounded-control border px-3.5 py-2.5 text-sm outline-none transition-all duration-fast focus:ring-2 focus:ring-offset-0";
 const NORMAL = "border-border-strong bg-surface focus:border-accent focus:ring-accent/20";
 
-export function ContentSourceForm({ initialData, saving, onSave, onCancel }: Props) {
+export function ContentSourceForm({ initialData, rssLimit, saving, onSave, onCancel }: Props) {
   const t = useTranslations("contentSources");
   const tCommon = useTranslations("common");
 
@@ -142,6 +144,7 @@ export function ContentSourceForm({ initialData, saving, onSave, onCancel }: Pro
   // name lives in `config.title` — so the field is labelled for that, not
   // "Name". Terminology only: the payload key is unchanged.
   const isCalendar = type === "calendar_event";
+  const rssLimitReached = !isEdit && type === "rss" && !!rssLimit && rssLimit.used >= rssLimit.max;
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-4">
@@ -164,6 +167,15 @@ export function ContentSourceForm({ initialData, saving, onSave, onCancel }: Pro
               </option>
             ))}
           </select>
+        )}
+        {!isEdit && type === "rss" && rssLimit && (
+          <p
+            className={`mt-1 text-xs ${rssLimitReached ? "text-status-warning-fg" : "text-fg-faint"}`}
+          >
+            {rssLimitReached
+              ? t("rssLimitReached", { max: rssLimit.max })
+              : t("rssLimitHelp", { used: rssLimit.used, max: rssLimit.max })}
+          </p>
         )}
       </div>
 
@@ -405,7 +417,13 @@ export function ContentSourceForm({ initialData, saving, onSave, onCancel }: Pro
       </label>
 
       <div className="flex items-center gap-3 pt-1">
-        <Button type="submit" variant="primary" size="sm" loading={saving}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="sm"
+          loading={saving}
+          disabled={rssLimitReached}
+        >
           {saving ? tCommon("saving") : isEdit ? tCommon("save") : t("addSource")}
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>

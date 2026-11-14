@@ -3,6 +3,7 @@ import { verifyCronRequest } from "@/lib/security/cron-auth";
 import { enqueueJob } from "@/lib/services/queue/enqueue-job.service";
 import { RSS_INGESTION_JOB_TYPE, RSS_INGESTION_DEDUPE_KEY } from "@/lib/queue/job-types";
 
+// Not scheduled in vercel.json (database usage); kept for manual invocation.
 // Cron work must never be cached or statically optimized.
 export const dynamic = "force-dynamic";
 // The route no longer runs ingestion inline — it only enqueues one job and returns.

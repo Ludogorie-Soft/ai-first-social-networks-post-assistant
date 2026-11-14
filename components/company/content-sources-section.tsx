@@ -10,14 +10,21 @@ import { ContentSourceCard } from "./content-source-card";
 import { ContentSourceForm } from "./content-source-form";
 import type { ContentSourceItem } from "@/lib/services/company/list-content-sources.service";
 import type { ContentSourcePayload } from "./content-source-form";
+import { MAX_RSS_SOURCES_PER_COMPANY } from "@/lib/ai/rss-article-quota";
 
 interface Props {
   slug: string;
   initialSources: ContentSourceItem[];
   canManage: boolean;
+  topPriorityTopicCount: number;
 }
 
-export function ContentSourcesSection({ slug, initialSources, canManage }: Props) {
+export function ContentSourcesSection({
+  slug,
+  initialSources,
+  canManage,
+  topPriorityTopicCount,
+}: Props) {
   const t = useTranslations("contentSources");
   const tCommon = useTranslations("common");
   const apiError = useApiErrorMessage();
@@ -49,6 +56,8 @@ export function ContentSourcesSection({ slug, initialSources, canManage }: Props
     }
   }
 
+  const rssSourceCount = sources.filter((s) => s.type === "rss").length;
+
   function handleDelete(id: string) {
     setSources((prev) => prev.filter((s) => s.id !== id));
   }
@@ -69,6 +78,7 @@ export function ContentSourcesSection({ slug, initialSources, canManage }: Props
             </Alert>
           )}
           <ContentSourceForm
+            rssLimit={{ used: rssSourceCount, max: MAX_RSS_SOURCES_PER_COMPANY }}
             saving={adding}
             onSave={handleAdd}
             onCancel={() => {
@@ -101,6 +111,7 @@ export function ContentSourcesSection({ slug, initialSources, canManage }: Props
                 slug={slug}
                 source={source}
                 canManage={canManage}
+                topPriorityTopicCount={topPriorityTopicCount}
                 onDelete={handleDelete}
                 onUpdate={handleUpdate}
               />

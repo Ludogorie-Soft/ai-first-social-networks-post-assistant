@@ -66,6 +66,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
   );
 
   if (!result.success) {
+    if (result.code === "RSS_SOURCE_LIMIT_REACHED") {
+      return NextResponse.json(
+        {
+          error: {
+            code: result.code,
+            message: `A brand can have at most ${result.limit} RSS sources.`,
+            limit: result.limit,
+          },
+        },
+        { status: 409 }
+      );
+    }
     const status = result.code === "NOT_FOUND" ? 404 : 403;
     const message = result.code === "NOT_FOUND" ? "Not found" : "Forbidden";
     return NextResponse.json({ error: { code: result.code, message } }, { status });

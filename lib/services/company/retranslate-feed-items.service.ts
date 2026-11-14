@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/client";
 import { enqueueJob, type EnqueueJobResult } from "@/lib/services/queue/enqueue-job.service";
 import { RSS_TRANSLATION_JOB_TYPE, RSS_TRANSLATION_DEDUPE_KEY } from "@/lib/queue/job-types";
 import { resolveTranslationConfig } from "@/lib/ai/feed-item-translation";
+import { FETCH_SETTLED_CLASSIFICATION_STATUS } from "@/lib/ai/feed-item-classification";
 import { resolveBrandGuidelinesAccess } from "./update-brand-guidelines.service";
 import { RECLASSIFY_REOPEN_DATA, sourceBelongsToCompany } from "./reclassify-feed-items.service";
 
@@ -242,11 +243,32 @@ async function defaultReopen(
   now: Date,
   includeCompleted: boolean
 ): Promise<number> {
-  const result = await prisma.feedItem.updateMany({
-    where: retranslatableWhere(companyId, sourceId, now, includeCompleted),
-    data: { ...REOPEN_DATA },
-  });
-  return result.count;
+  const where = retranslatableWhere(companyId, sourceId, now, includeCompleted);
+  const [reopenedWithVerdict, reopenedTranslationOnly] = await prisma.$transaction([
+    prisma.feedItem.updateMany({
+      where: { AND: [where, notFetchSettledWhere()] },
+      data: { ...REOPEN_DATA },
+    }),
+    prisma.feedItem.updateMany({
+      where: { AND: [where, { classificationStatus: FETCH_SETTLED_CLASSIFICATION_STATUS }] },
+      data: { ...RETRANSLATE_REOPEN_DATA },
+    }),
+  ]);
+  return reopenedWithVerdict.count + reopenedTranslationOnly.count;
+}
+
+/**
+ * Rows whose verdict may be reopened. An article saved by a manual RSS fetch keeps
+ * the verdict it was saved for, so its retranslation leaves classification alone.
+ * NULL is named on its own because Prisma's `not` never matches it.
+ */
+export function notFetchSettledWhere(): Record<string, unknown> {
+  return {
+    OR: [
+      { classificationStatus: null },
+      { classificationStatus: { not: FETCH_SETTLED_CLASSIFICATION_STATUS } },
+    ],
+  };
 }
 
 function defaultEnqueue(): Promise<EnqueueJobResult> {

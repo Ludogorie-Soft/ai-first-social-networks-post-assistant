@@ -72,7 +72,20 @@ export type RejectionReason = (typeof REJECTION_REASONS)[number];
  * question. (A bodyless item reopened that way is simply re-skipped, one cheap
  * write and no model call.)
  */
-export type ClassificationStatus = "pending" | "classifying" | "completed" | "skipped" | "failed";
+export type ClassificationStatus =
+  | "pending"
+  | "classifying"
+  | "completed"
+  | "skipped"
+  | "failed"
+  | typeof FETCH_SETTLED_CLASSIFICATION_STATUS;
+
+/**
+ * A verdict given by a manual RSS fetch before the article was saved. Final: no
+ * drain selects it and no reopen path (settings save, Reclassify, Retranslate)
+ * matches it, so the article keeps the verdict it was saved for.
+ */
+export const FETCH_SETTLED_CLASSIFICATION_STATUS = "settled_at_fetch";
 
 /** Source types whose items are classified. Article feeds only. */
 export function isClassifiableSourceType(type: string): boolean {

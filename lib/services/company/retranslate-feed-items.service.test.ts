@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { Prisma } from "@prisma/client";
 import {
   RETRANSLATE_REOPEN_DATA,
+  notFetchSettledWhere,
   parseIncludeCompletedFromBody,
   requestRetranslation,
   retranslatableWhere,
   retranslateSourceFeedItems,
 } from "./retranslate-feed-items.service";
 import { RECLASSIFY_REOPEN_DATA } from "./reclassify-feed-items.service";
+import { FETCH_SETTLED_CLASSIFICATION_STATUS } from "@/lib/ai/feed-item-classification";
 import { MAX_TRANSLATION_ATTEMPTS } from "@/lib/ai/feed-item-translation";
 import { translationSelectableWhere } from "@/lib/ai/feed-item-translation-claim";
 import type { EnqueueJobResult } from "@/lib/services/queue/enqueue-job.service";
@@ -624,5 +626,24 @@ describe("returning to the classification flow", () => {
     // after the retranslation lands rather than beside it.
     assert.equal(RETRANSLATE_REOPEN_DATA.translationStatus, "pending");
     assert.equal(RECLASSIFY_REOPEN_DATA.classificationStatus, "pending");
+  });
+});
+
+describe("notFetchSettledWhere — a fetch-time verdict is never reopened", () => {
+  it("matches every status except the fetch-settled one, NULL included", () => {
+    const alternatives = notFetchSettledWhere().OR as Array<Record<string, unknown>>;
+    const matches = (status: string | null) =>
+      alternatives.some((alt) => {
+        const clause = alt.classificationStatus;
+        if (clause === null) return status === null;
+        const not = (clause as { not?: string }).not;
+        // Prisma's `not` never matches NULL.
+        return status !== null && status !== not;
+      });
+
+    assert.equal(matches(FETCH_SETTLED_CLASSIFICATION_STATUS), false);
+    for (const status of [null, "pending", "classifying", "completed", "skipped", "failed"]) {
+      assert.equal(matches(status), true, String(status));
+    }
   });
 });

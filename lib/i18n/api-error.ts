@@ -60,6 +60,14 @@ export const API_ERROR_CODES = [
   "CANNOT_CHANGE_OWN_ROLE",
   "ALREADY_MEMBER",
   "INGEST_FAILED",
+  // Manual RSS fetch — the brand has too few top-priority topics, the source's
+  // rolling weekly article cap is spent or would be exceeded, or the signed
+  // candidate list expired.
+  "TOPIC_PRIORITIES_REQUIRED",
+  "ARTICLE_QUOTA_EXHAUSTED",
+  "ARTICLE_QUOTA_EXCEEDED",
+  "INVALID_SELECTION",
+  "RSS_SOURCE_LIMIT_REACHED",
   "EMAIL_NOT_VERIFIED",
   "POST_TOO_LONG_WITH_URL",
   "CANNOT_GENERATE_UNIQUE_POST",

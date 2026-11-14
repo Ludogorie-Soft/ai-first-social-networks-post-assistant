@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useApiErrorMessage } from "@/lib/i18n/api-error";
 import { Alert } from "@/components/ui/Alert";
@@ -13,11 +14,15 @@ import type { ContentSourceItem } from "@/lib/services/company/list-content-sour
 import { formatDateTime } from "@/lib/i18n/format-date";
 import { LISTING_PROVIDERS } from "@/lib/integrations/listing-feed/registry";
 import type { ContentSourcePayload } from "./content-source-form";
+import { RssCandidatePicker } from "./rss-candidate-picker";
+import { MIN_TOP_PRIORITY_TOPICS_FOR_FETCH, type ArticleQuota } from "@/lib/ai/rss-article-quota";
+import type { RssCandidateView } from "@/lib/services/company/fetch-rss-articles.service";
 
 interface Props {
   slug: string;
   source: ContentSourceItem;
   canManage: boolean;
+  topPriorityTopicCount: number;
   onDelete: (id: string) => void;
   onUpdate: (source: ContentSourceItem) => void;
 }
@@ -48,7 +53,27 @@ function sourcePreview(source: ContentSourceItem): string {
   return "";
 }
 
-export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate }: Props) {
+interface IngestResponse {
+  created: number;
+  updated: number;
+  considered?: number;
+  checked?: number;
+  candidates?: RssCandidateView[] | null;
+  quota?: ArticleQuota;
+}
+
+interface IngestErrorBody {
+  error?: { code?: string; message?: string; quota?: ArticleQuota };
+}
+
+export function ContentSourceCard({
+  slug,
+  source,
+  canManage,
+  topPriorityTopicCount,
+  onDelete,
+  onUpdate,
+}: Props) {
   const t = useTranslations("contentSources");
   const tCommon = useTranslations("common");
   const apiError = useApiErrorMessage();
@@ -57,10 +82,16 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
   const [editError, setEditError] = useState("");
 
   const [ingesting, setIngesting] = useState(false);
-  const [ingestResult, setIngestResult] = useState<{ created: number; updated: number } | null>(
-    null
-  );
+  const [ingestResult, setIngestResult] = useState<IngestResponse | null>(null);
   const [ingestError, setIngestError] = useState("");
+  const [quotaFullUntil, setQuotaFullUntil] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<RssCandidateView[] | null>(null);
+  const [remainingQuota, setRemainingQuota] = useState(0);
+  // Bumped after articles are saved so the articles panel reloads.
+  const [articlesVersion, setArticlesVersion] = useState(0);
+
+  const isRss = source.type === "rss";
+  const topicGateClosed = isRss && topPriorityTopicCount < MIN_TOP_PRIORITY_TOPICS_FOR_FETCH;
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -106,6 +137,8 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
     setIngesting(true);
     setIngestResult(null);
     setIngestError("");
+    setQuotaFullUntil(null);
+    setCandidates(null);
     try {
       const res = await fetch(`/api/v1/companies/${slug}/content-sources/${source.id}/ingest`, {
         method: "POST",
@@ -113,13 +146,23 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
       if (!res.ok) {
         const isJson = res.headers.get("content-type")?.includes("application/json");
         if (isJson) {
-          const json = (await res.json()) as { error?: { message?: string } };
+          const json = (await res.json()) as IngestErrorBody;
+          if (json.error?.code === "ARTICLE_QUOTA_EXHAUSTED" && json.error.quota) {
+            setQuotaFullUntil(json.error.quota.nextSlotAt);
+            return;
+          }
           throw new Error(apiError(json.error));
         }
         throw new Error(tCommon("somethingWentWrong"));
       }
-      const json = (await res.json()) as { created: number; updated: number };
-      setIngestResult(json);
+      const json = (await res.json()) as IngestResponse;
+      if (json.candidates && json.candidates.length > 0 && json.quota) {
+        setCandidates(json.candidates);
+        setRemainingQuota(json.quota.remaining);
+      } else {
+        setIngestResult(json);
+        if (json.created > 0) setArticlesVersion((v) => v + 1);
+      }
     } catch (err) {
       setIngestError(err instanceof Error ? err.message : tCommon("somethingWentWrong"));
     } finally {
@@ -171,10 +214,57 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
       </p>
 
       {/* Alerts */}
-      {ingestResult && (
-        <Alert variant="success" className="mb-3">
-          {t("ingestSuccess", { created: ingestResult.created, updated: ingestResult.updated })}
+      {topicGateClosed && (
+        <Alert variant="warning" className="mb-3">
+          {t("topicGate", {
+            required: MIN_TOP_PRIORITY_TOPICS_FOR_FETCH,
+            configured: topPriorityTopicCount,
+          })}{" "}
+          <Link
+            href={`/companies/${slug}/settings/brand`}
+            className="font-medium underline underline-offset-2"
+          >
+            {t("topicGateLink")}
+          </Link>
         </Alert>
+      )}
+      {quotaFullUntil !== null && (
+        <Alert variant="info" className="mb-3">
+          {t("quotaExhausted", { date: formatDate(quotaFullUntil, t("never")) })}
+        </Alert>
+      )}
+      {ingestResult &&
+        (isRss ? (
+          <Alert variant="success" className="mb-3">
+            {ingestResult.checked === undefined
+              ? t("candidatesSaved", {
+                  created: ingestResult.created,
+                  remaining: ingestResult.quota?.remaining ?? 0,
+                })
+              : t("rssIngestSuccess", {
+                  created: ingestResult.created,
+                  checked: ingestResult.checked,
+                  remaining: ingestResult.quota?.remaining ?? 0,
+                })}
+          </Alert>
+        ) : (
+          <Alert variant="success" className="mb-3">
+            {t("ingestSuccess", { created: ingestResult.created, updated: ingestResult.updated })}
+          </Alert>
+        ))}
+      {candidates && (
+        <RssCandidatePicker
+          slug={slug}
+          sourceId={source.id}
+          candidates={candidates}
+          remaining={remainingQuota}
+          onSaved={(created, quota) => {
+            setCandidates(null);
+            setIngestResult({ created, updated: 0, quota });
+            setArticlesVersion((v) => v + 1);
+          }}
+          onDiscard={() => setCandidates(null)}
+        />
       )}
       {ingestError && (
         <Alert variant="error" className="mb-3">
@@ -220,7 +310,13 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" size="sm" loading={ingesting} onClick={handleIngest}>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={ingesting}
+                disabled={topicGateClosed || candidates !== null}
+                onClick={handleIngest}
+              >
                 {ingesting ? t("ingesting") : t("ingest")}
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
@@ -244,7 +340,12 @@ export function ContentSourceCard({ slug, source, canManage, onDelete, onUpdate 
       )}
       {/* RSS articles panel — lazy-loaded per source */}
       {source.type === "rss" && !isEditing && (
-        <RssArticlesPanel slug={slug} sourceId={source.id} canManage={canManage} />
+        <RssArticlesPanel
+          key={articlesVersion}
+          slug={slug}
+          sourceId={source.id}
+          canManage={canManage}
+        />
       )}
     </Card>
   );

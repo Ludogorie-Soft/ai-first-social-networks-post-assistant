@@ -134,7 +134,7 @@ async function main(): Promise<void> {
     console.log(`itemsUpdated: ${result.updated}`);
   } else {
     console.log(`status:       failed (${result.code})`);
-    if (result.message) console.log(`error:        ${result.message}`);
+    if ("message" in result && result.message) console.log(`error:        ${result.message}`);
   }
 }
 

@@ -24,7 +24,9 @@ import {
   isClassifiableSourceType,
   type ClassifiableItemState,
 } from "@/lib/ai/feed-item-classification";
+import type { ArticleQuota } from "@/lib/ai/rss-article-quota";
 import type { Prisma } from "@prisma/client";
+import { fetchRssArticles, type RssCandidateView } from "./fetch-rss-articles.service";
 
 export type IngestContentSourceResult =
   | {
@@ -50,8 +52,18 @@ export type IngestContentSourceResult =
        * drive translation's and extraction's; NOT part of the public API response.
        */
       classificationWorkCreated: number;
+      /** Set for RSS sources, which go through the bounded fetch. */
+      rss?: {
+        considered: number;
+        checked: number;
+        candidates: RssCandidateView[] | null;
+        quota: ArticleQuota;
+      };
     }
-  | { success: false; code: "NOT_FOUND" | "FORBIDDEN" | "INGEST_FAILED"; message?: string };
+  | { success: false; code: "NOT_FOUND" | "FORBIDDEN" | "INGEST_FAILED"; message?: string }
+  | { success: false; code: "TOPIC_PRIORITIES_REQUIRED"; required: number; configured: number }
+  | { success: false; code: "ARTICLE_QUOTA_EXHAUSTED"; quota: ArticleQuota }
+  | { success: false; code: "NO_ACTIVE_PROVIDER" };
 
 /** What ingestion knows about an existing row's translation state. */
 interface ExistingTranslation {
@@ -756,6 +768,25 @@ export async function ingestContentSource(
     where: { id: sourceId, companyId },
   });
   if (!source) return { success: false, code: "NOT_FOUND" };
+
+  if (source.type === "rss") {
+    const result = await fetchRssArticles(source, companyId);
+    if (!result.success) return result;
+    return {
+      success: true,
+      created: result.created,
+      updated: 0,
+      translationWorkCreated: result.translationWorkCreated,
+      extractionWorkCreated: 0,
+      classificationWorkCreated: 0,
+      rss: {
+        considered: result.considered,
+        checked: result.checked,
+        candidates: result.candidates,
+        quota: result.quota,
+      },
+    };
+  }
 
   try {
     const {
