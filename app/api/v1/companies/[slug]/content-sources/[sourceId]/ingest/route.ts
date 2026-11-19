@@ -5,6 +5,10 @@ import { enqueueTranslationAfterIngest } from "@/lib/services/company/enqueue-tr
 import { enqueueExtractionAfterIngest } from "@/lib/services/company/enqueue-extraction-after-ingest";
 import { enqueueClassificationAfterIngest } from "@/lib/services/company/enqueue-classification-after-ingest";
 
+// An RSS fetch classifies up to MAX_RSS_CANDIDATES_PER_FETCH articles inline
+// within RSS_FETCH_BUDGET_MS; this leaves headroom for the feed read and the save.
+export const maxDuration = 300;
+
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ slug: string; sourceId: string }> }
@@ -37,6 +41,39 @@ export async function POST(
         { error: { code: "FORBIDDEN", message: "Forbidden" } },
         { status: 403 }
       );
+    if (result.code === "TOPIC_PRIORITIES_REQUIRED")
+      return NextResponse.json(
+        {
+          error: {
+            code: "TOPIC_PRIORITIES_REQUIRED",
+            message: `Add at least ${result.required} top-priority topics in Brand settings before fetching.`,
+            required: result.required,
+            configured: result.configured,
+          },
+        },
+        { status: 409 }
+      );
+    if (result.code === "ARTICLE_QUOTA_EXHAUSTED")
+      return NextResponse.json(
+        {
+          error: {
+            code: "ARTICLE_QUOTA_EXHAUSTED",
+            message: "This source has saved its weekly maximum of articles.",
+            quota: result.quota,
+          },
+        },
+        { status: 409 }
+      );
+    if (result.code === "NO_ACTIVE_PROVIDER")
+      return NextResponse.json(
+        {
+          error: {
+            code: "NO_ACTIVE_PROVIDER",
+            message: "No default AI model is configured. Contact an administrator.",
+          },
+        },
+        { status: 503 }
+      );
     return NextResponse.json(
       { error: { code: "INGEST_FAILED", message: result.message ?? "Ingestion failed" } },
       { status: 502 }
@@ -61,5 +98,9 @@ export async function POST(
   // normally hands over to classification — never runs for it.
   await enqueueClassificationAfterIngest(result.classificationWorkCreated, { slug, sourceId });
 
-  return NextResponse.json({ created: result.created, updated: result.updated });
+  return NextResponse.json({
+    created: result.created,
+    updated: result.updated,
+    ...(result.rss ?? {}),
+  });
 }

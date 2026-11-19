@@ -113,7 +113,7 @@ async function defaultFindCandidates(
  * Read once per run, not per item — the configuration cannot change mid-batch, and
  * a per-item read would multiply the cheapest part of the step by fifteen.
  */
-async function defaultLoadContext(companyId: string): Promise<ClassificationContext> {
+export async function loadClassificationContext(companyId: string): Promise<ClassificationContext> {
   const brand = await prisma.brandGuidelines.findUnique({
     where: { companyId },
     select: {
@@ -153,7 +153,7 @@ export async function classifyFeedItems(
 ): Promise<ClassifyFeedItemsSummary> {
   const limit = opts.limit ?? CLASSIFICATION_BATCH_SIZE;
   const findCandidates = deps.findCandidates ?? defaultFindCandidates;
-  const loadContext = deps.loadContext ?? defaultLoadContext;
+  const loadContext = deps.loadContext ?? loadClassificationContext;
   const classify = deps.classify ?? classifyFeedItem;
 
   const summary: ClassifyFeedItemsSummary = {

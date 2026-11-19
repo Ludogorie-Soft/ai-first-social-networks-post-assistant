@@ -246,6 +246,14 @@ function withTimeout<T>(work: Promise<T>, ms: number, scope: "attempt" | "item")
   });
 }
 
+export type ClassificationProvider =
+  { ok: true; instance: ILlmProvider; provider: string; model: string } | { ok: false };
+
+/** The admin default provider, exactly as every classification resolves it. */
+export async function resolveClassificationProvider(): Promise<ClassificationProvider> {
+  return defaultResolveProvider();
+}
+
 async function defaultResolveProvider(): Promise<
   { ok: true; instance: ILlmProvider; provider: string; model: string } | { ok: false }
 > {
